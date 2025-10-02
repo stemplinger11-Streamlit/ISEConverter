@@ -8,14 +8,14 @@ st.set_page_config(page_title="ISE Importer", layout="centered", page_icon="📊
 
 # Konstanten
 COLUMN_NAMES = [
-    "MACAddress", "EndPointPolicy", "IdentityGroup", "PortalUser.GuestType", "Description",
-    "PortalUser.Location", "PortalUser.GuestStatus", "StaticAssignment", "User-Name",
-    "DeviceRegistrationStatus", "PortalUser.CreationType", "AUPAccepted", "PortalUser.EmailAddress",
-    "PortalUser.PhoneNumber", "FirstName", "ip", "Device Type", "host-name", "StaticGroupAssignment",
-    "MDMEnrolled", "MDMOSVersion", "PortalUser.LastName", "PortalUser.GuestSponsor", "EmailAddress",
-    "PortalUser", "PortalUser.FirstName", "BYODRegistration", "MDMServerName", "LastName",
-    "MDMServerID", "Location"
-]
+    "MACAddress","EndPointPolicy","IdentityGroup","PortalUser.GuestType","Description",
+    "PortalUser.Location","PortalUser.GuestStatus","StaticAssignment","User-Name",
+    "DeviceRegistrationStatus","PortalUser.CreationType","AUPAccepted","PortalUser.EmailAddress",
+    "PortalUser.PhoneNumber","FirstName","ip","Device Type","host-name","StaticGroupAssignment",
+    "MDMEnrolled","MDMOSVersion","PortalUser.LastName","PortalUser.GuestSponsor","EmailAddress",
+    "PortalUser","PortalUser.FirstName","BYODRegistration","MDMServerName","LastName",
+    "MDMServerID","Location"
+]  # Länge = 31
 
 def read_excel_safe(file):
     try:
@@ -35,7 +35,6 @@ def validate_mac_column(df):
             raise ValueError(f"Fehler in Zeile {idx}: MAC-Adresse ist leer.")
 
 def count_commas(df):
-    # Zählt alle Kommas in den vier Spalten
     return df.iloc[:, :4].astype(str).apply(lambda col: col.str.count(",")).sum().sum()
 
 def remove_commas(df):
@@ -50,21 +49,19 @@ def build_csv_text(df, include_description, remove_commas_flag):
         group = row[1].strip() if pd.notna(row[1]) else ""
         desc = row[2].strip() if pd.notna(row[2]) else ""
         loc = row[3].strip() if pd.notna(row[3]) else ""
-        # CSV-Struktur
-        vals = [mac, "", ""]        # Position 1-3
+        # CSV-Struktur: 31 Spalten
+        vals = [mac, "", ""]        # 1–3
         vals.append(group)          # 4
-        vals += ["", ""]            # 5-6
+        vals += ["", ""]            # 5–6
         vals.append(desc if include_description else "")  # 7
-        vals += [""] * 26           # 8-33
-        vals.append(loc)            # 34
+        vals += [""] * 23           # 8–30 (23 leere Felder)
+        vals.append(loc)            # 31
         rows.append(vals)
-    # Erzeuge CSV-String
     buf = io.StringIO()
     pd.DataFrame(rows, columns=COLUMN_NAMES).to_csv(buf, index=False)
     return buf.getvalue()
 
 def check_text_mac_in_csv(csv_text):
-    # Prüft in Zeilen 2+ auf Wort "MAC" (case-insensitive)
     lines = csv_text.splitlines()
     for i, line in enumerate(lines[1:], start=2):
         if re.search(r"\bMAC\b", line, re.IGNORECASE):
@@ -88,20 +85,16 @@ def main():
         df = read_excel_safe(uploaded)
         validate_mac_column(df)
 
-        # Komma-Erkennung
         comma_count = count_commas(df)
         remove_commas_flag = False
         if comma_count > 0:
             st.warning(f"⚠️ {int(comma_count)} Kommas in den Daten entdeckt.")
             remove_commas_flag = st.checkbox("Kommas automatisch entfernen", value=True)
 
-        # Beschreibungstoggle
         include_description = st.checkbox("Beschreibung in CSV-Export einschließen", value=True)
 
-        # CSV erzeugen und zeigen
         csv_text = build_csv_text(df, include_description, remove_commas_flag)
 
-        # Warnung bei "MAC" in Text
         bad_line = check_text_mac_in_csv(csv_text)
         if bad_line:
             st.error(f"❌ Wort 'MAC' in Zeile {bad_line} der CSV entdeckt. Bitte korrigieren.")
