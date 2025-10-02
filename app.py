@@ -1,172 +1,127 @@
 import streamlit as st
 import pandas as pd
 import io
+import re
 
-# Konfiguration
-st.set_page_config(
-    page_title="ISE Importer", 
-    layout="centered",
-    page_icon="📊"
-)
+# App-Konfiguration
+st.set_page_config(page_title="ISE Importer", layout="centered", page_icon="📊")
 
 # Konstanten
 COLUMN_NAMES = [
-    "MACAddress","EndPointPolicy","IdentityGroup","PortalUser.GuestType","Description",
-    "PortalUser.Location","PortalUser.GuestStatus","StaticAssignment","User-Name",
-    "DeviceRegistrationStatus","PortalUser.CreationType","AUPAccepted","PortalUser.EmailAddress",
-    "PortalUser.PhoneNumber","FirstName","ip","Device Type","host-name","StaticGroupAssignment",
-    "MDMEnrolled","MDMOSVersion","PortalUser.LastName","PortalUser.GuestSponsor","EmailAddress",
-    "PortalUser","PortalUser.FirstName","BYODRegistration","MDMServerName","LastName",
-    "MDMServerID","Location"
+    "MACAddress", "EndPointPolicy", "IdentityGroup", "PortalUser.GuestType", "Description",
+    "PortalUser.Location", "PortalUser.GuestStatus", "StaticAssignment", "User-Name",
+    "DeviceRegistrationStatus", "PortalUser.CreationType", "AUPAccepted", "PortalUser.EmailAddress",
+    "PortalUser.PhoneNumber", "FirstName", "ip", "Device Type", "host-name", "StaticGroupAssignment",
+    "MDMEnrolled", "MDMOSVersion", "PortalUser.LastName", "PortalUser.GuestSponsor", "EmailAddress",
+    "PortalUser", "PortalUser.FirstName", "BYODRegistration", "MDMServerName", "LastName",
+    "MDMServerID", "Location"
 ]
 
-def escape_commas_if_needed(value, comma_handling):
-    """Fügt Anführungszeichen um Werte mit Kommas hinzu"""
-    if comma_handling and isinstance(value, str) and ',' in value:
-        return f'"{value}"'
-    return value
-
-def validate_excel_data(df):
-    """Validiert die Excel-Daten"""
+def read_excel_safe(file):
+    try:
+        df = pd.read_excel(file, header=None, dtype=str, engine="openpyxl")
+    except Exception as e:
+        raise ValueError(f"Excel konnte nicht gelesen werden: {e}")
     if df.empty:
         raise ValueError("Die hochgeladene Datei ist leer.")
-    
-    if df.shape < 4:
+    if df.shape[1] < 4:
         raise ValueError("Zu wenige Spalten erkannt. Benötigt werden mindestens 4 Spalten: MAC, ISE MAC Gruppe, Beschreibung, Standort.")
-    
-    # Prüfe MAC-Adressen
-    for idx, row in df.iterrows():
-        mac = str(row).strip() if pd.notna(row) else ""
-        if mac == "" or mac.lower() == "nan":
-            raise ValueError(f"Fehler in Zeile {idx+1}: MAC-Adresse ist leer.")
+    return df.iloc[:, :4]
 
-def count_commas_in_data(df, comma_handling):
-    """Zählt Zellen mit Kommas"""
-    if not comma_handling:
-        return 0
-    
-    comma_count = 0
-    for col in df.columns[:4]:  # Nur die ersten 4 Spalten prüfen
-        comma_count += df[col].astype(str).str.contains(',', na=False).sum()
-    return comma_count
+def validate_mac_column(df):
+    for idx, cell in enumerate(df.iloc[:, 0], start=1):
+        val = str(cell).strip() if pd.notna(cell) else ""
+        if val == "" or val.lower() == "nan":
+            raise ValueError(f"Fehler in Zeile {idx}: MAC-Adresse ist leer.")
 
-def build_csv_rows(df, include_description, comma_handling):
-    """Erstellt CSV-Zeilen nach ISE-Spezifikation"""
+def count_commas(df):
+    # Zählt alle Kommas in den vier Spalten
+    return df.iloc[:, :4].astype(str).apply(lambda col: col.str.count(",")).sum().sum()
+
+def remove_commas(df):
+    return df.iloc[:, :4].astype(str).applymap(lambda v: v.replace(",", ""))
+
+def build_csv_text(df, include_description, remove_commas_flag):
+    if remove_commas_flag:
+        df = remove_commas(df)
     rows = []
-    
-    for idx, row in df.iterrows():
-        mac = str(row).strip() if pd.notna(row) else ""
-        group = str(row).strip() if pd.notna(row) else ""
-        desc = str(row).strip() if pd.notna(row) else ""
-        loc = str(row).strip() if pd.notna(row) else ""
-        
-        # Escape Kommas falls aktiviert
-        if comma_handling:
-            mac = escape_commas_if_needed(mac, True)
-            group = escape_commas_if_needed(group, True)
-            desc = escape_commas_if_needed(desc, True)
-            loc = escape_commas_if_needed(loc, True)
-        
-        # CSV-Struktur: MAC, 2 leere, ISE-Gruppe, 2 leere, Beschreibung (optional), 26 leere, Standort
-        values = [mac, "", ""]  # Position 1-3
-        values.append(group)    # Position 4
-        values.extend(["", ""])  # Position 5-6
-        
-        if include_description:
-            values.append(desc)  # Position 7
-        else:
-            values.append("")    # Position 7 leer
-            
-        values.extend([""] * 26)  # Position 8-33 (26 leere Spalten)
-        values.append(loc)        # Position 34
-        
-        rows.append(values)
-    
-    return rows
+    for _, row in df.iterrows():
+        mac = row[0].strip()
+        group = row[1].strip() if pd.notna(row[1]) else ""
+        desc = row[2].strip() if pd.notna(row[2]) else ""
+        loc = row[3].strip() if pd.notna(row[3]) else ""
+        # CSV-Struktur
+        vals = [mac, "", ""]        # Position 1-3
+        vals.append(group)          # 4
+        vals += ["", ""]            # 5-6
+        vals.append(desc if include_description else "")  # 7
+        vals += [""] * 26           # 8-33
+        vals.append(loc)            # 34
+        rows.append(vals)
+    # Erzeuge CSV-String
+    buf = io.StringIO()
+    pd.DataFrame(rows, columns=COLUMN_NAMES).to_csv(buf, index=False)
+    return buf.getvalue()
 
-def read_excel_safe(file):
-    """Liest Excel-Datei sicher ein"""
-    try:
-        df = pd.read_excel(file, header=None, dtype=str)
-        return df.iloc[:, :4]  # Nur erste 4 Spalten
-    except Exception as e:
-        raise ValueError(f"Excel konnte nicht gelesen werden: {str(e)}")
+def check_text_mac_in_csv(csv_text):
+    # Prüft in Zeilen 2+ auf Wort "MAC" (case-insensitive)
+    lines = csv_text.splitlines()
+    for i, line in enumerate(lines[1:], start=2):
+        if re.search(r"\bMAC\b", line, re.IGNORECASE):
+            return i
+    return None
 
 def main():
-    # Header
     st.title("🔧 ISE Importer")
-    st.markdown("""
-    **Bitte laden Sie eine Excel-Tabelle mit Spalten in dieser Reihenfolge hoch:**  
-    `MAC Adresse | ISE MAC Gruppe | Beschreibung | Standort`
-    
-    ⚠️ Nur leere MAC-Adressen (Spalte A) werden validiert und blockiert.
-    """)
-    
-    # Upload
-    uploaded_file = st.file_uploader(
-        "Excel-Datei hochladen",
-        type=["xlsx", "xls"],
-        help="Unterstützte Formate: .xlsx, .xls"
+    st.markdown(
+        "**Bitte Excel-Tabelle hochladen:**  \n"
+        "`MAC Adresse | ISE MAC Gruppe | Beschreibung | Standort`  \n"
+        "Leere MAC-Adressen (Spalte A) werden validiert und blockiert."
     )
-    
-    if uploaded_file is not None:
-        # Optionen
-        col1, col2 = st.columns(2)
-        with col1:
-            include_description = st.checkbox(
-                "✅ Beschreibung in CSV-Export einschließen", 
-                value=True
-            )
-        with col2:
-            comma_handling = st.checkbox(
-                "🔤 Erweiterte Komma-Behandlung aktivieren", 
-                value=True
-            )
-        
-        try:
-            # Excel einlesen und validieren
-            df = read_excel_safe(uploaded_file)
-            validate_excel_data(df)
-            
-            # Kommas zählen
-            comma_count = count_commas_in_data(df, comma_handling)
-            
-            # CSV generieren
-            csv_rows = build_csv_rows(df, include_description, comma_handling)
-            csv_df = pd.DataFrame(csv_rows, columns=COLUMN_NAMES)
-            
-            # CSV zu String
-            csv_buffer = io.StringIO()
-            csv_df.to_csv(csv_buffer, index=False)
-            csv_content = csv_buffer.getvalue()
-            
-            # Erfolg anzeigen
-            st.success("✅ Datei erfolgreich verarbeitet!")
-            
-            # Komma-Warnung
-            if comma_count > 0:
-                st.info(f"ℹ️ {comma_count} Zellen mit Kommas erkannt und automatisch mit Anführungszeichen versehen.")
-            
-            # Voransicht
-            st.subheader("📋 CSV-Voransicht (erste 20 Zeilen)")
-            preview_lines = csv_content.split('\n')[:21]  # Header + 20 Zeilen
-            st.text('\n'.join(preview_lines))
-            
-            # Download
-            st.download_button(
-                label="📥 CSV herunterladen",
-                data=csv_content,
-                file_name="ise_import.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
-            
-        except ValueError as ve:
-            st.error(f"❌ {str(ve)}")
-        except Exception as ex:
-            st.error(f"💥 Unerwarteter Fehler: {str(ex)}")
-    else:
-        st.info("👆 Bitte wählen Sie eine Excel-Datei aus.")
+
+    uploaded = st.file_uploader("Excel-Datei hochladen (.xlsx, .xls)", type=["xlsx", "xls"])
+    if not uploaded:
+        st.info("👆 Bitte eine Excel-Datei auswählen.")
+        return
+
+    try:
+        df = read_excel_safe(uploaded)
+        validate_mac_column(df)
+
+        # Komma-Erkennung
+        comma_count = count_commas(df)
+        remove_commas_flag = False
+        if comma_count > 0:
+            st.warning(f"⚠️ {int(comma_count)} Kommas in den Daten entdeckt.")
+            remove_commas_flag = st.checkbox("Kommas automatisch entfernen", value=True)
+
+        # Beschreibungstoggle
+        include_description = st.checkbox("Beschreibung in CSV-Export einschließen", value=True)
+
+        # CSV erzeugen und zeigen
+        csv_text = build_csv_text(df, include_description, remove_commas_flag)
+
+        # Warnung bei "MAC" in Text
+        bad_line = check_text_mac_in_csv(csv_text)
+        if bad_line:
+            st.error(f"❌ Wort 'MAC' in Zeile {bad_line} der CSV entdeckt. Bitte korrigieren.")
+
+        st.success("✅ Datei erfolgreich verarbeitet!")
+        st.subheader("📋 CSV-Vorschau (erste 20 Zeilen)")
+        preview = "\n".join(csv_text.splitlines()[:21])
+        st.text(preview)
+
+        st.download_button(
+            "📥 CSV herunterladen",
+            data=csv_text,
+            file_name="ise_import.csv",
+            mime="text/csv"
+        )
+
+    except ValueError as ve:
+        st.error(f"❌ {ve}")
+    except Exception as ex:
+        st.error(f"💥 Unerwarteter Fehler: {ex}")
 
 if __name__ == "__main__":
     main()
