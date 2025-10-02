@@ -6,7 +6,7 @@ import re
 # App-Konfiguration
 st.set_page_config(page_title="ISE Importer", layout="centered", page_icon="📊")
 
-# Konstanten
+# Zielspalten (31 Spalten)
 COLUMN_NAMES = [
     "MACAddress","EndPointPolicy","IdentityGroup","PortalUser.GuestType","Description",
     "PortalUser.Location","PortalUser.GuestStatus","StaticAssignment","User-Name",
@@ -43,23 +43,34 @@ def remove_commas(df):
 def build_csv_text(df, include_description, remove_commas_flag):
     if remove_commas_flag:
         df = remove_commas(df)
+
     rows = []
     for _, row in df.iterrows():
-        mac = row[0].strip()
-        group = row[1].strip() if pd.notna(row[1]) else ""
-        desc = row[2].strip() if pd.notna(row[2]) else ""
-        loc = row[3].strip() if pd.notna(row[3]) else ""
-        # CSV-Struktur: 31 Spalten
-        vals = [mac, "", ""]        # 1–3
-        vals.append(group)          # 4
-        vals += ["", ""]            # 5–6
-        vals.append(desc if include_description else "")  # 7
-        vals += [""] * 23           # 8–30 (23 leere Felder)
-        vals.append(loc)            # 31
-        rows.append(vals)
-    buf = io.StringIO()
-    pd.DataFrame(rows, columns=COLUMN_NAMES).to_csv(buf, index=False)
-    return buf.getvalue()
+        mac  = (row[0] or "").strip()
+        func = (row[1] or "").strip()  # ISE MAC Gruppe / Function
+        desc = (row[2] or "").strip()
+        loc  = (row[3] or "").strip()
+
+        # Gewünschtes Layout:
+        # MAC, "", "", func, "", "", desc/"" , 26x "", loc
+        vals = []
+        vals.append(mac)                 # 1: MACAddress
+        vals += ["", ""]                 # 2-3: zwei leere nach MAC
+        vals.append(func)                # 4: Function (in Vorgabe an Position 4)
+        vals += ["", ""]                 # 5-6: zwei leere nach Function
+        vals.append(desc if include_description else "")  # 7: Beschreibung oder leer
+        vals += [""] * 26                # 8-33: genau 26 leere
+        vals.append(loc)                 # 34: Standort
+
+        # Da Zielspalten 31 sind, aber wir hier 34 Werte haben (Layout-Vorgabe),
+        # schreiben wir die CSV als Text ohne DataFrame-Spaltenzuordnung, um exakt das gewünschte Muster zu liefern.
+        row_csv = ",".join(vals)
+        rows.append(row_csv)
+
+    # Header + Zeilen als Text
+    header = ",".join(COLUMN_NAMES)
+    csv_text = header + "\n" + "\n".join(rows)
+    return csv_text
 
 def check_text_mac_in_csv(csv_text):
     lines = csv_text.splitlines()
@@ -73,7 +84,8 @@ def main():
     st.markdown(
         "**Bitte Excel-Tabelle hochladen:**  \n"
         "`MAC Adresse | ISE MAC Gruppe | Beschreibung | Standort`  \n"
-        "Leere MAC-Adressen (Spalte A) werden validiert und blockiert."
+        "Leere MAC-Adressen (Spalte A) werden validiert und blockiert.\n\n"
+        "Ziel-Layout pro Zeile: MAC,,ISE-Gruppe,,Beschreibung,(26x ,),Standort"
     )
 
     uploaded = st.file_uploader("Excel-Datei hochladen (.xlsx, .xls)", type=["xlsx", "xls"])
@@ -85,25 +97,32 @@ def main():
         df = read_excel_safe(uploaded)
         validate_mac_column(df)
 
+        # Komma-Erkennung
         comma_count = count_commas(df)
         remove_commas_flag = False
         if comma_count > 0:
-            st.warning(f"⚠️ {int(comma_count)} Kommas in den Daten entdeckt.")
-            remove_commas_flag = st.checkbox("Kommas automatisch entfernen", value=True)
+            st.warning(f"⚠️ {int(comma_count)} Kommas in den Quelldaten entdeckt.")
+            remove_commas_flag = st.checkbox("Kommas automatisch entfernen (empfohlen)", value=True)
 
+        # Beschreibungstoggle
         include_description = st.checkbox("Beschreibung in CSV-Export einschließen", value=True)
 
+        # CSV erzeugen (als reinen Text, damit das exakte Komma-Muster gewahrt bleibt)
         csv_text = build_csv_text(df, include_description, remove_commas_flag)
 
+        # Warnung bei 'MAC' im CSV-Text ab Zeile 2
         bad_line = check_text_mac_in_csv(csv_text)
         if bad_line:
-            st.error(f"❌ Wort 'MAC' in Zeile {bad_line} der CSV entdeckt. Bitte korrigieren.")
+            st.error(f"❌ Wort 'MAC' in Zeile {bad_line} der CSV entdeckt. Bitte Quellwerte prüfen.")
 
         st.success("✅ Datei erfolgreich verarbeitet!")
+
+        # Textvorschau (Header + 20 Zeilen)
         st.subheader("📋 CSV-Vorschau (erste 20 Zeilen)")
         preview = "\n".join(csv_text.splitlines()[:21])
         st.text(preview)
 
+        # Download-Button
         st.download_button(
             "📥 CSV herunterladen",
             data=csv_text,
