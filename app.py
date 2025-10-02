@@ -55,7 +55,7 @@ def build_csv_text(df, include_desc, remove_commas_flag):
         parts.append(func)           # Function
         parts.append("")             # eine leere
         parts.append(desc if include_desc else "")  # Description oder leer
-        parts += [""] * 26           # 26 leere Felder
+        parts += [""] * 25           # 26 leere Felder
         parts.append(loc)            # Standort
         lines.append(",".join(parts))
     header = ",".join(COLUMN_NAMES)
